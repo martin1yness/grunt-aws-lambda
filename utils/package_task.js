@@ -25,7 +25,7 @@ packageTask.getHandler = function (grunt) {
         var task = this;
 
         var options = this.options({
-            'dist_folder': 'dist',
+            'dist_folder': 'build/dist',
             'include_time': true,
             'include_version': true,
             'package_folder': './',
@@ -51,15 +51,20 @@ packageTask.getHandler = function (grunt) {
 
         archive_name += '_' + time_string;
 
-        npm.load([], function (err, npm) {
+        npm.load({
+            loaded: false
+        }, function (err, npm) {
 
             npm.config.set('loglevel', 'silent');
 
             var install_location = dir.path;
             var zip_path = install_location + '/' + archive_name + '.zip';
 
-            npm.commands.install(install_location, options.package_folder, function () {
-
+            var deps = [];
+            for (var mod in pkg.dependencies) {
+                deps.push(mod + "@" + pkg.dependencies[mod]);
+            }
+            npm.commands.install(deps, function (err, data) {
                 var output = fs.createWriteStream(zip_path);
                 var zipArchive = archive('zip');
 
@@ -77,25 +82,22 @@ packageTask.getHandler = function (grunt) {
 
                 zipArchive.pipe(output);
 
+                if(options.include_files.length == 0) {
+                    options.include_files = ['src/**', 'package.json'];
+                    for(var mod in pkg.dependencies) {
+                        options.include_files.push('node_modules/'+mod+'/**');
+                    }
+                }
+                grunt.log.warn("Including files: " + JSON.stringify(options.include_files));
+
                 zipArchive.bulk([
                     {
-                        src: ['./**'],
+                        src: options.include_files,
                         dot: true,
                         expand: true,
-                        cwd: install_location + '/node_modules/' + pkg.name
+                        cwd: options.package_folder
                     }
                 ]);
-
-                if (options.include_files.length) {
-                    zipArchive.bulk([
-                        {
-                            src: options.include_files,
-                            dot: true,
-                            expand: true,
-                            cwd: options.package_folder
-                        }
-                    ]);
-                }
 
                 zipArchive.finalize();
 

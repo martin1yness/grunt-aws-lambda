@@ -17,9 +17,95 @@ var dateFacade = require('./date_facade');
 
 var deployTask = {};
 
+
+deployTask._getLambda = function(grunt, options, callback) {
+    var deploy_function = grunt.config.get('lambda_deploy.' + this.target + '.function');
+    var deploy_arn = grunt.config.get('lambda_deploy.' + this.target + '.arn');
+
+    var params = {
+        FunctionName: (deploy_arn) ? deploy_arn : deploy_function
+    };
+
+    if(params.FunctionName === 'undefined')
+        grunt.fail.warn("Must define `depoy_function` or `deloy_arn`...");
+
+    this.lambda.getFunction(params, function (err, data) {
+        if (err) {
+            if (err.statusCode === 404) {
+                grunt.log.warn('Unable to find lambda function ' + params.FunctionName + ', attempting to create it.');
+                deployTask._createLambda(grunt, options, function(data) {
+                    callback(data);
+                });
+            } else {
+                grunt.log.error('AWS API request failed with ' + err.statusCode + ' - ' + err);
+                grunt.fail.warn('Check your AWS credentials, region and permissions are correct.');
+            }
+        } else {
+            callback(data);
+        }
+    });
+}
+
+/**
+ * Creates a lambda function if it didn't already exist
+ * @param grunt A grunt build system object
+ * @param options The options object created inside the #getHandler function
+ * @param callback A callback to invoke with the Lambda#createFunction response
+ * @private
+ */
+deployTask._createLambda = function(grunt, options, callback) {
+    var deploy_function = grunt.config.get('lambda_deploy.' + this.target + '.function');
+    var deploy_arn = grunt.config.get('lambda_deploy.' + this.target + '.arn');
+    var deploy_role = grunt.config.get('lambda_deploy.' + this.target + '.role');
+
+    var _getLambdaRole = function(grunt, options, callback) {
+        var params = {
+            RoleName: deploy_role
+        };
+
+        deployTask.iam.getRole(params, function(err, data) {
+            if(err) {
+                grunt.fail.warn("Cannot create lambda because role `"+deploy_role+"` does not exist: " + err);
+            } else {
+                callback(data);
+            }
+        });
+    }
+
+    _getLambdaRole(grunt, options, function(data) {
+        var params = {
+            Code: {
+                ZipFile: fs.readFileSync(grunt.config.get('lambda_deploy.' + deployTask.target + '.package'))
+            },
+            FunctionName: (deploy_arn) ? deploy_arn : deploy_function,
+            Handler: options.handler,
+            Role: data.Role.Arn,
+            Runtime: 'nodejs', /* required */
+            MemorySize: options.memory,
+            Publish: true,
+            Timeout: options.timeout,
+            VpcConfig: {
+                SubnetIds : options.subnetIds,
+                SecurityGroupIds : options.securityGroupIds
+            }
+        }
+
+        deployTask.lambda.createFunction(params, function(err, data) {
+            if(err) {
+                grunt.fail.warn("Unable to create lambda function `"+params.FunctionName+"`: "+ err);
+                return;
+            }
+            callback(data);
+        });
+    })
+}
+
+
+
 deployTask.getHandler = function (grunt) {
 
     return function () {
+        deployTask.target = this.target;
 
         grunt.config.requires('lambda_deploy.' + this.target + '.package');
 
@@ -89,8 +175,11 @@ deployTask.getHandler = function (grunt) {
 
         var done = this.async();
 
-        var lambda = new AWS.Lambda({
+        deployTask.lambda = new AWS.Lambda({
             apiVersion: '2015-03-31'
+        });
+        deployTask.iam = new AWS.IAM({
+            apiVersion: '2010-05-08'
         });
 
         var getDeploymentDescription = function () {
@@ -112,16 +201,8 @@ deployTask.getHandler = function (grunt) {
             return description;
         };
 
-        lambda.getFunction({FunctionName: deploy_function}, function (err, data) {
 
-            if (err) {
-                if (err.statusCode === 404) {
-                    grunt.fail.warn('Unable to find lambda function ' + deploy_function + ', verify the lambda function name and AWS region are correct.');
-                } else {
-                    grunt.log.error('AWS API request failed with ' + err.statusCode + ' - ' + err);
-                    grunt.fail.warn('Check your AWS credentials, region and permissions are correct.');
-                }
-            }
+        deployTask._getLambda(grunt, options, function(data) {
 
             var current = data.Configuration;
             var configParams = {};
@@ -141,17 +222,17 @@ deployTask.getHandler = function (grunt) {
             }
 
             if (options.subnetIds !== null && options.securityGroupIds !== null) {
-               configParams.VpcConfig = {
-                 SubnetIds : options.subnetIds,
-                 SecurityGroupIds : options.securityGroupIds
-               };
+                configParams.VpcConfig = {
+                    SubnetIds : options.subnetIds,
+                    SecurityGroupIds : options.securityGroupIds
+                };
             }
 
             var updateConfig = function (func_name, func_options) {
                 var deferred = Q.defer();
                 if (Object.keys(func_options).length > 0) {
                     func_options.FunctionName = func_name;
-                    lambda.updateFunctionConfiguration(func_options, function (err, data) {
+                    deployTask.lambda.updateFunctionConfiguration(func_options, function (err, data) {
                         if (err) {
                             grunt.fail.warn('Could not update config, check that values and permissions are valid');
                             deferred.reject();
@@ -170,7 +251,7 @@ deployTask.getHandler = function (grunt) {
             var createVersion = function (func_name) {
                 var deferred = Q.defer();
                 if (options.enableVersioning) {
-                    lambda.publishVersion({FunctionName: func_name, Description: getDeploymentDescription()}, function (err, data) {
+                    deployTask.lambda.publishVersion({FunctionName: func_name, Description: getDeploymentDescription()}, function (err, data) {
                         if (err) {
                             grunt.fail.warn('Publishing version for function ' + func_name + ' failed with message ' + err.message);
                             deferred.reject();
@@ -196,7 +277,7 @@ deployTask.getHandler = function (grunt) {
                 };
 
 
-                lambda.getAlias(params, function (err, data) {
+                deployTask.lambda.getAlias(params, function (err, data) {
                     params.FunctionVersion = version;
                     params.Description = getDeploymentDescription();
                     var aliasFunction = 'updateAlias';
@@ -209,7 +290,7 @@ deployTask.getHandler = function (grunt) {
                             return;
                         }
                     }
-                    lambda[aliasFunction](params, function (err, data) {
+                    deployTask.lambda[aliasFunction](params, function (err, data) {
                         if (err) {
                             grunt.fail.warn(aliasFunction + ' for ' + func_name + ' failed with message ' + err.message);
                             deferred.reject();
@@ -251,7 +332,7 @@ deployTask.getHandler = function (grunt) {
                     ZipFile: data
                 };
 
-                lambda.updateFunctionCode(codeParams, function (err, data) {
+                deployTask.lambda.updateFunctionCode(codeParams, function (err, data) {
                     if (err) {
                         grunt.fail.warn('Package upload failed, check you have lambda:UpdateFunctionCode permissions and that your package is not too big to upload.');
                     }
@@ -265,8 +346,8 @@ deployTask.getHandler = function (grunt) {
                         .then(function () {
                             done(true);
                         }).catch(function (err) {
-                            grunt.fail.warn('Uncaught exception: ' + err.message);
-                        });
+                        grunt.fail.warn('Uncaught exception: ' + err.message);
+                    });
                 });
             });
         });

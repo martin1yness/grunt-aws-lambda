@@ -268,6 +268,7 @@ grunt.initConfig({
     lambda_deploy: {
         default: {
             arn: 'arn:aws:lambda:us-east-1:123456781234:function:my-function',
+            role: 'my_lambdas_rolename', // (Optional) Used if the lambda doesn't exist and needs to be created
             options: {
                 // Task-specific options go here.
             }
