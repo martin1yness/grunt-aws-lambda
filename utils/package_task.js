@@ -109,10 +109,21 @@ packageTask.getHandler = function (grunt) {
 
                         dist_zip.on('close', function () {
                             rimraf(install_location, function () {
-                                grunt.config.set('lambda_deploy.' + task.target + '.package', dist_path);
-                                grunt.config.set('lambda_deploy.' + task.target + '.version', pkg.version);
-                                grunt.config.set('lambda_deploy.' + task.target + '.archive_name', archive_name);
-                                grunt.config.set('lambda_deploy.' + task.target + '.package_name', pkg.name);
+                                var _doSetProps = function(target) {
+                                    grunt.config.set('lambda_deploy.' + target + '.package', dist_path);
+                                    grunt.config.set('lambda_deploy.' + target + '.version', pkg.version);
+                                    grunt.config.set('lambda_deploy.' + target + '.archive_name', archive_name);
+                                    grunt.config.set('lambda_deploy.' + target + '.package_name', pkg.name);
+                                }
+
+                                if(options.functions) {
+                                    for(var i=0; i<options.functions.length; i++) {
+                                        _doSetProps(options.functions[i]);
+                                    }
+                                } else {
+                                    _doSetProps(task.target);
+                                }
+
                                 grunt.log.writeln('Created package at ' + dist_path);
                                 done(true);
                             });
