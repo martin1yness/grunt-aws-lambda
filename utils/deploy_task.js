@@ -80,7 +80,7 @@ deployTask._createLambda = function(grunt, options, callback) {
             FunctionName: (deploy_arn) ? deploy_arn : deploy_function,
             Handler: options.handler,
             Role: data.Role.Arn,
-            Runtime: 'nodejs', /* required */
+            Runtime: 'nodejs4.3', /* required */
             MemorySize: options.memory,
             Publish: true,
             Timeout: options.timeout,
