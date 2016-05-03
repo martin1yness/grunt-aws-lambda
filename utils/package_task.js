@@ -83,7 +83,7 @@ packageTask.getHandler = function (grunt) {
                 zipArchive.pipe(output);
 
                 if(options.include_files.length == 0) {
-                    options.include_files = ['src/**', 'package.json'];
+                    options.include_files = ['src/**', 'lib/**', 'package.json'];
                     for(var mod in pkg.dependencies) {
                         options.include_files.push('node_modules/'+mod+'/**');
                     }
